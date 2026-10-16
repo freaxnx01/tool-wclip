@@ -1,0 +1,5 @@
+client/wclip text eol=lf
+*.sh text eol=lf
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.vbs text eol=crlf

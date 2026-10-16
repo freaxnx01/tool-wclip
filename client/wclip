@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# wclip — copy text or HTML to the Windows 11 clipboard from a remote Linux shell.
+#
+#   wclip [--html|--text] [FILE]      reads FILE, or stdin when FILE is omitted or "-"
+#   wclip --check                     is the receiver reachable through the tunnel?
+#
+# Talks to the wclip receiver on the Win11 box at http://localhost:$WCLIP_PORT, reached
+# through the SSH reverse tunnel the Win11 box keeps open (or directly under WSL2 mirrored
+# networking). Format defaults to --html for *.html/*.htm files, --text otherwise.
+#
+# Config: WCLIP_PORT (default 17790), WCLIP_TOKEN or the token file
+# ${XDG_CONFIG_HOME:-~/.config}/wclip/token (copy of %LOCALAPPDATA%\wclip\token on Win11).
+#
+# If you hit a blocker running this, fix it here and update this header so the next run
+# does not have to re-derive it.
+set -euo pipefail
+
+port="${WCLIP_PORT:-17790}"
+token_file="${XDG_CONFIG_HOME:-$HOME/.config}/wclip/token"
+url="http://localhost:${port}"
+
+usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; }
+die() { echo "wclip: $*" >&2; exit 1; }
+
+format="" file="-" check=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --html) format=html ;;
+    --text) format=text ;;
+    --check) check=1 ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; [ $# -gt 0 ] && file="$1"; break ;;
+    -?*) die "unknown option $1 (see --help)" ;;
+    *) file="$1" ;;
+  esac
+  shift
+done
+
+command -v curl >/dev/null || die "curl not found"
+
+unreachable() {
+  die "no receiver on ${url} — is the Win11 receiver running and the reverse tunnel up? (Win11: Get-ScheduledTask -TaskPath '\\Custom\\' -TaskName 'wclip*')"
+}
+
+if [ "$check" = 1 ]; then
+  curl -fsS --max-time 5 "${url}/health" >/dev/null 2>&1 || unreachable
+  echo "wclip: receiver reachable on ${url}"
+  exit 0
+fi
+
+token="${WCLIP_TOKEN:-}"
+if [ -z "$token" ]; then
+  [ -r "$token_file" ] || die "no token: set WCLIP_TOKEN or put the Win11 token in ${token_file}"
+  token="$(tr -d '[:space:]' < "$token_file")"
+fi
+
+if [ -z "$format" ]; then
+  case "$file" in *.html|*.htm|*.HTML|*.HTM) format=html ;; *) format=text ;; esac
+fi
+[ "$format" = html ] && ctype="text/html; charset=utf-8" || ctype="text/plain; charset=utf-8"
+[ "$file" = "-" ] || [ -r "$file" ] || die "cannot read ${file}"
+
+set +e
+reply="$(curl -sS --max-time 15 -w '\n%{http_code}' \
+  -H "Authorization: Bearer ${token}" -H "Content-Type: ${ctype}" \
+  --data-binary "@${file}" "${url}/clip" 2>&1)"
+rc=$?
+set -e
+case $rc in
+  0) ;;
+  7|52|56) unreachable ;;   # refused / empty reply / reset: tunnel up but receiver gone, or no tunnel
+  *) die "curl failed (exit $rc): ${reply}" ;;
+esac
+
+status="${reply##*$'\n'}"
+body="${reply%$'\n'*}"
+[ "$status" = 200 ] || die "receiver answered ${status}: ${body}"
+echo "wclip: ${body}" >&2

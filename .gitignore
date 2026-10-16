@@ -1,0 +1,10 @@
+# Local runtime state / logs
+*.log
+
+# OS cruft
+Thumbs.db
+.DS_Store
+
+# Local session/handoff state
+.claude/
+.worktrees/
