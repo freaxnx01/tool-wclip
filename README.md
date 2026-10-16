@@ -78,10 +78,62 @@ pwsh -NoProfile -File .\Install-Wclip.ps1 -Unregister
 The tasks run straight from this checkout, so keep the clone where it is, or re-run install
 after moving it.
 
-### More than one host
+### Check SSH first
 
-Each host gets its own tunnel task. Run the install again with another `-SshHost`. The receiver
-and the token are shared.
+The tunnel uses **native Windows OpenSSH** (`C:\Windows\System32\OpenSSH\ssh.exe`), not a WSL
+`ssh`. Native ssh has to log in to the host on its own, without a prompt:
+
+```powershell
+& C:\Windows\System32\OpenSSH\ssh.exe -o BatchMode=yes <host> true
+```
+
+If your hosts only accept certificates that live in WSL2 (opkssh, a CA-signed cert routed through
+an `ssh.bat` shim), native ssh doesn't have them. Add a plain key for that host to `~\.ssh` first.
+
+### More than one host (e.g. a homelab)
+
+Run the installer again with another `-SshHost`:
+
+```powershell
+pwsh -NoProfile -File .\Install-Wclip.ps1 -SshHost homelab-host -InstallClient
+```
+
+Each host gets its own tunnel task (`\Custom\wclip tunnel <host>`). The receiver and the token are
+shared, and tunnels to other hosts keep running.
+
+### A second Windows machine
+
+Clone this repo there and run the installer on that machine:
+
+```powershell
+git clone https://github.com/freaxnx01/tool-wclip
+cd tool-wclip\windows
+pwsh -NoProfile -File .\Install-Wclip.ps1 -SshHost homelab-host -InstallClient
+```
+
+It gets its own receiver and token. `-InstallClient` overwrites the host's token file, so the
+host's client then talks to the machine that installed last.
+
+If **two Windows machines tunnel into the same host**, they compete for the remote port. The
+second tunnel logs `remote port forwarding failed` and keeps retrying. Give one machine its own
+port, e.g. `-Port 17791`, and set `WCLIP_PORT=17791` on the host for the user who should reach it.
+
+## Configuration
+
+| What | Where | Default |
+|---|---|---|
+| Target host(s) | `Install-Wclip.ps1 -SshHost <host>`, once per host | none (required) |
+| Port | `-Port` on Windows, `WCLIP_PORT` on Linux. The two must match. | `17790` |
+| Token | `WCLIP_TOKEN` env var, or the token file | `~/.config/wclip/token` (Linux), `%LOCALAPPDATA%\wclip\token` (Windows) |
+| Max size | `Start-WclipReceiver.ps1 -MaxBytes`. The installer doesn't expose it, so changing it means editing the task arguments. | 4 MB |
+
+Fixed:
+
+- The receiver binds only to `localhost`, on purpose.
+
+- Tasks go in the `\Custom\` folder.
+
+- The tunnel uses native `C:\Windows\System32\OpenSSH\ssh.exe`.
 
 ## Client reference
 
